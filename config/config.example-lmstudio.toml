@@ -1,9 +1,9 @@
 # ============================================================
 # OpenManus — LM Studio Configuration (no Daytona required)
 # ============================================================
-# LM Studio exposes an OpenAI-compatible REST API on port 1234.
-# Start LM Studio, load a model, and enable the local server
-# before running OpenManus.
+# LM Studio exposes an OpenAI-compatible REST API.
+# When running inside Docker, use host.docker.internal to reach
+# the LM Studio server on the host machine.
 #
 # Usage:
 #   cp config/config.example-lmstudio.toml config/config.toml
@@ -11,23 +11,22 @@
 
 # --------------- Primary LLM --------------------------------
 [llm]
-api_type    = "lmstudio"                 # Activates the LM Studio path
-model       = "lmstudio-community/Meta-Llama-3-8B-Instruct-GGUF"
-base_url    = "http://localhost:1234/v1" # LM Studio default server URL
-api_key     = "lm-studio"               # Arbitrary non-empty string (not validated)
-max_tokens  = 4096
+api_type    = "lmstudio"
+model       = "qwen/qwen3-coder-next"
+base_url    = "http://host.docker.internal:1234/v1"
+api_key     = "lm-studio"               # Arbitrary non-empty string (not validated by LM Studio)
+max_tokens  = 8192
 temperature = 0.0
 
 # --------------- Vision / Multimodal LLM (optional) ---------
-# Load a vision-capable model in LM Studio and point this
-# section at it if you need image understanding.
-[llm.vision]
-api_type    = "lmstudio"
-model       = "lmstudio-community/llava-v1.6-mistral-7b-gguf"
-base_url    = "http://localhost:1234/v1"
-api_key     = "lm-studio"
-max_tokens  = 4096
-temperature = 0.0
+# Uncomment and adjust if you load a vision-capable model in LM Studio.
+# [llm.vision]
+# api_type    = "lmstudio"
+# model       = "qwen/qwen3-coder-next"
+# base_url    = "http://host.docker.internal:1234/v1"
+# api_key     = "lm-studio"
+# max_tokens  = 8192
+# temperature = 0.0
 
 # --------------- Browser (optional) -------------------------
 # [browser]
@@ -40,7 +39,6 @@ temperature = 0.0
 # fallback_engines = ["Bing", "Google"]
 
 # --------------- Local sandbox (optional) -------------------
-# Uses Docker for isolated code execution — no Daytona needed.
 # [sandbox]
 # use_sandbox    = false
 # image          = "python:3.12-slim"
