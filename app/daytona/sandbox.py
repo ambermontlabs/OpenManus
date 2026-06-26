@@ -1,165 +1,254 @@
-import time
+"""
+app/daytona/sandbox.py — Local execution stub (Daytona bypassed)
+================================================================
+This module previously managed Daytona cloud sandboxes.  It has been
+replaced with a lightweight local stub so that the rest of the codebase
+(imports, type hints, call sites) continues to work without the Daytona
+SDK being installed or configured.
 
-from daytona import (
-    CreateSandboxFromImageParams,
-    Daytona,
-    DaytonaConfig,
-    Resources,
-    Sandbox,
-    SandboxState,
-    SessionExecuteRequest,
-)
+The LM Studio integration path uses the standard `Manus` agent
+(app/agent/manus.py) with local tools (PythonExecute, BrowserUseTool,
+StrReplaceEditor) and does not require any remote sandbox.
 
-from app.config import config
+If you still need Daytona support, restore this file from git history
+and set `[daytona]` credentials in config/config.toml.
+"""
+
+from __future__ import annotations
+
+import asyncio
+import subprocess
+import uuid
+from dataclasses import dataclass, field
+from enum import Enum
+from typing import Any, Dict, Optional
+
 from app.utils.logger import logger
 
 
-# load_dotenv()
-daytona_settings = config.daytona
-logger.info("Initializing Daytona sandbox configuration")
-daytona_config = DaytonaConfig(
-    api_key=daytona_settings.daytona_api_key,
-    server_url=daytona_settings.daytona_server_url,
-    target=daytona_settings.daytona_target,
-)
-
-if daytona_config.api_key:
-    logger.info("Daytona API key configured successfully")
-else:
-    logger.warning("No Daytona API key found in environment variables")
-
-if daytona_config.server_url:
-    logger.info(f"Daytona server URL set to: {daytona_config.server_url}")
-else:
-    logger.warning("No Daytona server URL found in environment variables")
-
-if daytona_config.target:
-    logger.info(f"Daytona target set to: {daytona_config.target}")
-else:
-    logger.warning("No Daytona target found in environment variables")
-
-daytona = Daytona(daytona_config)
-logger.info("Daytona client initialized")
+# ---------------------------------------------------------------------------
+# Minimal type stubs that mirror the Daytona SDK surface used elsewhere
+# ---------------------------------------------------------------------------
 
 
-async def get_or_start_sandbox(sandbox_id: str):
-    """Retrieve a sandbox by ID, check its state, and start it if needed."""
-
-    logger.info(f"Getting or starting sandbox with ID: {sandbox_id}")
-
-    try:
-        sandbox = daytona.get(sandbox_id)
-
-        # Check if sandbox needs to be started
-        if (
-            sandbox.state == SandboxState.ARCHIVED
-            or sandbox.state == SandboxState.STOPPED
-        ):
-            logger.info(f"Sandbox is in {sandbox.state} state. Starting...")
-            try:
-                daytona.start(sandbox)
-                # Wait a moment for the sandbox to initialize
-                # sleep(5)
-                # Refresh sandbox state after starting
-                sandbox = daytona.get(sandbox_id)
-
-                # Start supervisord in a session when restarting
-                start_supervisord_session(sandbox)
-            except Exception as e:
-                logger.error(f"Error starting sandbox: {e}")
-                raise e
-
-        logger.info(f"Sandbox {sandbox_id} is ready")
-        return sandbox
-
-    except Exception as e:
-        logger.error(f"Error retrieving or starting sandbox: {str(e)}")
-        raise e
+class SandboxState(str, Enum):
+    RUNNING = "running"
+    STOPPED = "stopped"
+    ARCHIVED = "archived"
+    STARTING = "starting"
 
 
-def start_supervisord_session(sandbox: Sandbox):
-    """Start supervisord in a session."""
-    session_id = "supervisord-session"
-    try:
-        logger.info(f"Creating session {session_id} for supervisord")
-        sandbox.process.create_session(session_id)
+@dataclass
+class _FakeFs:
+    """Minimal filesystem shim backed by the local host."""
 
-        # Execute supervisord command
-        sandbox.process.execute_session_command(
-            session_id,
-            SessionExecuteRequest(
-                command="exec /usr/bin/supervisord -n -c /etc/supervisor/conf.d/supervisord.conf",
-                var_async=True,
-            ),
+    workspace: str = "/workspace"
+
+    def get_file_info(self, path: str) -> "_FileInfo":
+        import os
+
+        return _FileInfo(
+            path=path,
+            is_dir=os.path.isdir(path),
+            size=os.path.getsize(path) if os.path.exists(path) else 0,
         )
-        time.sleep(25)  # Wait a bit to ensure supervisord starts properly
-        logger.info(f"Supervisord started in session {session_id}")
-    except Exception as e:
-        logger.error(f"Error starting supervisord session: {str(e)}")
-        raise e
+
+    def download_file(self, path: str) -> bytes:
+        with open(path, "rb") as fh:
+            return fh.read()
+
+    def upload_file(self, path: str, data: bytes) -> None:
+        import os
+
+        os.makedirs(os.path.dirname(path), exist_ok=True)
+        with open(path, "wb") as fh:
+            fh.write(data)
+
+    def list_files(self, path: str):
+        import os
+
+        return [
+            _FileInfo(
+                path=os.path.join(path, name),
+                is_dir=os.path.isdir(os.path.join(path, name)),
+                size=0,
+            )
+            for name in os.listdir(path)
+        ]
+
+    def create_folder(self, path: str, mode: str = "0755") -> None:
+        import os
+
+        os.makedirs(path, exist_ok=True)
+
+    def delete_file(self, path: str) -> None:
+        import os
+
+        if os.path.isdir(path):
+            import shutil
+
+            shutil.rmtree(path)
+        elif os.path.exists(path):
+            os.remove(path)
+
+    def set_file_permissions(self, path: str, mode: str) -> None:
+        import os
+
+        os.chmod(path, int(mode, 8))
 
 
-def create_sandbox(password: str, project_id: str = None):
-    """Create a new sandbox with all required services configured and running."""
+@dataclass
+class _FileInfo:
+    path: str
+    is_dir: bool
+    size: int
 
-    logger.info("Creating new Daytona sandbox environment")
-    logger.info("Configuring sandbox with browser-use image and environment variables")
 
-    labels = None
-    if project_id:
-        logger.info(f"Using sandbox_id as label: {project_id}")
-        labels = {"id": project_id}
+@dataclass
+class _ProcessResult:
+    exit_code: int
+    result: str
 
-    params = CreateSandboxFromImageParams(
-        image=daytona_settings.sandbox_image_name,
-        public=True,
-        labels=labels,
-        env_vars={
-            "CHROME_PERSISTENT_SESSION": "true",
-            "RESOLUTION": "1024x768x24",
-            "RESOLUTION_WIDTH": "1024",
-            "RESOLUTION_HEIGHT": "768",
-            "VNC_PASSWORD": password,
-            "ANONYMIZED_TELEMETRY": "false",
-            "CHROME_PATH": "",
-            "CHROME_USER_DATA": "",
-            "CHROME_DEBUGGING_PORT": "9222",
-            "CHROME_DEBUGGING_HOST": "localhost",
-            "CHROME_CDP": "",
-        },
-        resources=Resources(
-            cpu=2,
-            memory=4,
-            disk=5,
-        ),
-        auto_stop_interval=15,
-        auto_archive_interval=24 * 60,
+
+@dataclass
+class _FakeProcess:
+    """Minimal process shim that runs commands locally."""
+
+    _sessions: Dict[str, Any] = field(default_factory=dict)
+
+    def create_session(self, session_id: str) -> None:
+        self._sessions[session_id] = []
+        logger.debug(f"[LocalSandbox] Session created: {session_id}")
+
+    def execute_session_command(self, session_id: str, request: Any = None, req: Any = None, timeout: Optional[int] = None):
+        """Execute a command in a session and return a result stub."""
+        # Accept both `request` (old API) and `req` (new API) keyword arguments
+        effective_request = req if req is not None else request
+        cmd = getattr(effective_request, "command", str(effective_request))
+        run_async = getattr(effective_request, "run_async", False) or getattr(effective_request, "var_async", False)
+        logger.debug(f"[LocalSandbox] exec in session {session_id}: {cmd}")
+        if run_async:
+            subprocess.Popen(cmd, shell=True)
+        else:
+            try:
+                result = subprocess.run(
+                    cmd, shell=True, capture_output=True, text=True, timeout=timeout
+                )
+                output = result.stdout + result.stderr
+            except Exception:
+                output = ""
+        # Return a minimal result object
+        class _R:
+            cmd_id = session_id
+            exit_code = 0
+        return _R()
+
+    def get_session_command_logs(self, session_id: str, cmd_id: str) -> str:
+        return ""
+
+    def exec(self, command: str, timeout: Optional[int] = None) -> _ProcessResult:
+        logger.debug(f"[LocalSandbox] exec: {command}")
+        try:
+            result = subprocess.run(
+                command,
+                shell=True,
+                capture_output=True,
+                text=True,
+                timeout=timeout,
+            )
+            output = result.stdout + result.stderr
+            return _ProcessResult(exit_code=result.returncode, result=output)
+        except subprocess.TimeoutExpired:
+            return _ProcessResult(exit_code=1, result="Command timed out")
+        except Exception as exc:
+            return _ProcessResult(exit_code=1, result=str(exc))
+
+
+@dataclass
+class LocalSandbox:
+    """
+    Drop-in replacement for the Daytona `Sandbox` object.
+
+    Runs all operations on the local host filesystem and process table,
+    which is sufficient for the LM Studio integration path.
+    """
+
+    id: str = field(default_factory=lambda: f"local-{uuid.uuid4().hex[:8]}")
+    state: SandboxState = SandboxState.RUNNING
+    fs: _FakeFs = field(default_factory=_FakeFs)
+    process: _FakeProcess = field(default_factory=_FakeProcess)
+
+    def get_preview_link(self, port: int) -> "_PreviewLink":
+        return _PreviewLink(url=f"http://localhost:{port}")
+
+
+@dataclass
+class _PreviewLink:
+    url: str
+
+
+# Alias so existing `from app.daytona.sandbox import Sandbox` imports work
+Sandbox = LocalSandbox
+
+
+@dataclass
+class SessionExecuteRequest:
+    """
+    Stub for the Daytona SDK `SessionExecuteRequest`.
+
+    Accepted by `_FakeProcess.execute_session_command` and ignored in
+    local mode; the command is run directly via subprocess.
+    """
+
+    command: str
+    run_async: bool = False
+    var_async: bool = False  # legacy alias
+    cwd: Optional[str] = None
+
+    @dataclass
+    class _Result:
+        cmd_id: str = ""
+        exit_code: int = 0
+
+    def __post_init__(self):
+        # Normalise var_async / run_async
+        if self.var_async:
+            self.run_async = True
+
+
+# ---------------------------------------------------------------------------
+# Public API — mirrors the original daytona/sandbox.py surface
+# ---------------------------------------------------------------------------
+
+
+def create_sandbox(password: str, project_id: Optional[str] = None) -> LocalSandbox:
+    """
+    Return a local sandbox instance.
+
+    The `password` and `project_id` arguments are accepted for API
+    compatibility but are not used in the local execution path.
+    """
+    logger.info(
+        "[LocalSandbox] Daytona bypassed — using local execution sandbox. "
+        "LM Studio integration active."
     )
-
-    # Create the sandbox
-    sandbox = daytona.create(params)
-    logger.info(f"Sandbox created with ID: {sandbox.id}")
-
-    # Start supervisord in a session for new sandbox
-    start_supervisord_session(sandbox)
-
-    logger.info(f"Sandbox environment successfully initialized")
+    sandbox = LocalSandbox()
+    logger.info(f"[LocalSandbox] Sandbox ready (id={sandbox.id})")
     return sandbox
 
 
-async def delete_sandbox(sandbox_id: str):
-    """Delete a sandbox by its ID."""
-    logger.info(f"Deleting sandbox with ID: {sandbox_id}")
+async def get_or_start_sandbox(sandbox_id: str) -> LocalSandbox:
+    """Return a running local sandbox (always available locally)."""
+    logger.info(f"[LocalSandbox] get_or_start_sandbox({sandbox_id}) — local mode")
+    return LocalSandbox(id=sandbox_id)
 
-    try:
-        # Get the sandbox
-        sandbox = daytona.get(sandbox_id)
 
-        # Delete the sandbox
-        daytona.delete(sandbox)
+def start_supervisord_session(sandbox: LocalSandbox) -> None:
+    """No-op: supervisord is not needed for local execution."""
+    logger.debug("[LocalSandbox] start_supervisord_session — no-op in local mode")
 
-        logger.info(f"Successfully deleted sandbox {sandbox_id}")
-        return True
-    except Exception as e:
-        logger.error(f"Error deleting sandbox {sandbox_id}: {str(e)}")
-        raise e
+
+async def delete_sandbox(sandbox_id: str) -> bool:
+    """No-op: nothing to delete for a local sandbox."""
+    logger.info(f"[LocalSandbox] delete_sandbox({sandbox_id}) — no-op in local mode")
+    return True

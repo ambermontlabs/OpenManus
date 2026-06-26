@@ -1,0 +1,59 @@
+# ============================================================
+# OpenManus — LM Studio Configuration (no Daytona required)
+# ============================================================
+# LM Studio exposes an OpenAI-compatible REST API on port 1234.
+# Start LM Studio, load a model, and enable the local server
+# before running OpenManus.
+#
+# Usage:
+#   cp config/config.example-lmstudio.toml config/config.toml
+#   python main.py
+
+# --------------- Primary LLM --------------------------------
+[llm]
+api_type    = "lmstudio"                 # Activates the LM Studio path
+model       = "lmstudio-community/Meta-Llama-3-8B-Instruct-GGUF"
+base_url    = "http://localhost:1234/v1" # LM Studio default server URL
+api_key     = "lm-studio"               # Arbitrary non-empty string (not validated)
+max_tokens  = 4096
+temperature = 0.0
+
+# --------------- Vision / Multimodal LLM (optional) ---------
+# Load a vision-capable model in LM Studio and point this
+# section at it if you need image understanding.
+[llm.vision]
+api_type    = "lmstudio"
+model       = "lmstudio-community/llava-v1.6-mistral-7b-gguf"
+base_url    = "http://localhost:1234/v1"
+api_key     = "lm-studio"
+max_tokens  = 4096
+temperature = 0.0
+
+# --------------- Browser (optional) -------------------------
+# [browser]
+# headless         = false
+# disable_security = true
+
+# --------------- Search (optional) --------------------------
+# [search]
+# engine          = "DuckDuckGo"
+# fallback_engines = ["Bing", "Google"]
+
+# --------------- Local sandbox (optional) -------------------
+# Uses Docker for isolated code execution — no Daytona needed.
+# [sandbox]
+# use_sandbox    = false
+# image          = "python:3.12-slim"
+# work_dir       = "/workspace"
+# memory_limit   = "512m"
+# cpu_limit      = 1.0
+# timeout        = 300
+# network_enabled = false
+
+# --------------- MCP (optional) -----------------------------
+[mcp]
+server_reference = "app.mcp.server"
+
+# --------------- Run-flow (optional) ------------------------
+[runflow]
+use_data_analysis_agent = false

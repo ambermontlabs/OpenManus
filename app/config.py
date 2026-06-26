@@ -105,8 +105,29 @@ class SandboxSettings(BaseModel):
     )
 
 
+class LMStudioSettings(BaseModel):
+    """Configuration for a pure LM Studio local inference backend."""
+
+    base_url: str = Field(
+        "http://localhost:1234/v1",
+        description="LM Studio local server URL (OpenAI-compatible)",
+    )
+    api_key: str = Field(
+        "lm-studio",
+        description="Arbitrary API key string — LM Studio does not validate it",
+    )
+    model: Optional[str] = Field(
+        None,
+        description="Default model identifier as shown in LM Studio (overrides [llm].model)",
+    )
+    timeout: int = Field(
+        120,
+        description="HTTP request timeout in seconds",
+    )
+
+
 class DaytonaSettings(BaseModel):
-    daytona_api_key: str
+    daytona_api_key: Optional[str] = Field(None, description="Daytona API key")
     daytona_server_url: Optional[str] = Field(
         "https://app.daytona.io/api", description=""
     )
@@ -188,6 +209,9 @@ class AppConfig(BaseModel):
     )
     daytona_config: Optional[DaytonaSettings] = Field(
         None, description="Daytona configuration"
+    )
+    lmstudio_config: Optional[LMStudioSettings] = Field(
+        None, description="LM Studio local inference configuration"
     )
 
     class Config:
@@ -294,7 +318,21 @@ class Config:
         if daytona_config:
             daytona_settings = DaytonaSettings(**daytona_config)
         else:
-            daytona_settings = DaytonaSettings()
+            daytona_settings = None
+
+        lmstudio_config = raw_config.get("lmstudio", {})
+        if lmstudio_config:
+            lmstudio_settings = LMStudioSettings(**lmstudio_config)
+        else:
+            lmstudio_settings = None
+
+        # Auto-detect LM Studio from llm.api_type = 'lmstudio'
+        if lmstudio_settings is None and base_llm.get("api_type", "").lower() == "lmstudio":
+            lmstudio_settings = LMStudioSettings(
+                base_url=base_llm.get("base_url", "http://localhost:1234/v1"),
+                api_key=base_llm.get("api_key", "lm-studio"),
+                model=base_llm.get("model"),
+            )
 
         mcp_config = raw_config.get("mcp", {})
         mcp_settings = None
@@ -324,6 +362,7 @@ class Config:
             "mcp_config": mcp_settings,
             "run_flow_config": run_flow_settings,
             "daytona_config": daytona_settings,
+            "lmstudio_config": lmstudio_settings,
         }
 
         self._config = AppConfig(**config_dict)
@@ -337,8 +376,13 @@ class Config:
         return self._config.sandbox
 
     @property
-    def daytona(self) -> DaytonaSettings:
+    def daytona(self) -> Optional[DaytonaSettings]:
         return self._config.daytona_config
+
+    @property
+    def lmstudio(self) -> Optional[LMStudioSettings]:
+        """Return LM Studio settings when configured, otherwise None."""
+        return self._config.lmstudio_config
 
     @property
     def browser_config(self) -> Optional[BrowserSettings]:

@@ -32,6 +32,9 @@ from app.schema import (
 
 
 REASONING_MODELS = ["o1", "o3-mini"]
+# LM Studio is OpenAI-compatible; tool-calling and vision depend on the loaded model.
+# Models listed here will receive image content when available.
+LMSTUDIO_API_TYPE = "lmstudio"
 MULTIMODAL_MODELS = [
     "gpt-4-vision-preview",
     "gpt-4o",
@@ -221,6 +224,20 @@ class LLM:
                 )
             elif self.api_type == "aws":
                 self.client = BedrockClient()
+            elif self.api_type == LMSTUDIO_API_TYPE:
+                # LM Studio exposes an OpenAI-compatible API; use AsyncOpenAI
+                # pointed at the local server.  The api_key is not validated
+                # by LM Studio but the OpenAI SDK requires a non-empty value.
+                lmstudio_base_url = self.base_url or "http://localhost:1234/v1"
+                lmstudio_api_key = self.api_key or "lm-studio"
+                logger.info(
+                    f"LM Studio mode: connecting to {lmstudio_base_url} "
+                    f"with model '{self.model}'"
+                )
+                self.client = AsyncOpenAI(
+                    api_key=lmstudio_api_key,
+                    base_url=lmstudio_base_url,
+                )
             else:
                 self.client = AsyncOpenAI(api_key=self.api_key, base_url=self.base_url)
 
@@ -677,8 +694,13 @@ class LLM:
             if tool_choice not in TOOL_CHOICE_VALUES:
                 raise ValueError(f"Invalid tool_choice: {tool_choice}")
 
-            # Check if the model supports images
-            supports_images = self.model in MULTIMODAL_MODELS
+            # Check if the model supports images.
+            # For LM Studio, vision support depends on the loaded model; we
+            # optimistically allow it so multimodal payloads are forwarded.
+            supports_images = (
+                self.model in MULTIMODAL_MODELS
+                or self.api_type == LMSTUDIO_API_TYPE
+            )
 
             # Format messages
             if system_msgs:
@@ -710,13 +732,21 @@ class LLM:
                     if not isinstance(tool, dict) or "type" not in tool:
                         raise ValueError("Each tool must be a dict with 'type' field")
 
+            # For LM Studio use the configured timeout (default 120 s) so
+            # large local models have enough time to respond.
+            effective_timeout = (
+                config.lmstudio.timeout
+                if self.api_type == LMSTUDIO_API_TYPE and config.lmstudio
+                else timeout
+            )
+
             # Set up the completion request
             params = {
                 "model": self.model,
                 "messages": messages,
                 "tools": tools,
                 "tool_choice": tool_choice,
-                "timeout": timeout,
+                "timeout": effective_timeout,
                 **kwargs,
             }
 

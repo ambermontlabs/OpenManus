@@ -1,32 +1,46 @@
+"""
+app/daytona/tool_base.py — Local execution stub (Daytona bypassed)
+==================================================================
+This module previously imported the Daytona SDK and provided
+`SandboxToolsBase`, a Pydantic base class that wired tools to a remote
+Daytona sandbox.
+
+It has been rewritten to use the local `LocalSandbox` shim so that all
+existing sandbox tool subclasses (SandboxShellTool, SandboxFilesTool,
+SandboxBrowserTool, SandboxVisionTool) continue to import and instantiate
+without the Daytona SDK being present.
+
+The LM Studio integration path does NOT use these sandbox tools at all —
+it uses the standard `Manus` agent with local tools.  This stub exists
+purely to keep the import graph intact and avoid ImportError when
+`sandbox_agent.py` or the sandbox tool modules are imported.
+"""
+
+from __future__ import annotations
+
 from dataclasses import dataclass, field
 from datetime import datetime
 from typing import Any, ClassVar, Dict, Optional
 
-from daytona import Daytona, DaytonaConfig, Sandbox, SandboxState
 from pydantic import Field
 
-from app.config import config
-from app.daytona.sandbox import create_sandbox, start_supervisord_session
+from app.daytona.sandbox import LocalSandbox, SandboxState, create_sandbox
 from app.tool.base import BaseTool
 from app.utils.files_utils import clean_path
 from app.utils.logger import logger
 
+# Re-export Sandbox so `from app.daytona.tool_base import Sandbox` works
+Sandbox = LocalSandbox
 
-# load_dotenv()
-daytona_settings = config.daytona
-daytona_config = DaytonaConfig(
-    api_key=daytona_settings.daytona_api_key,
-    server_url=daytona_settings.daytona_server_url,
-    target=daytona_settings.daytona_target,
-)
-daytona = Daytona(daytona_config)
+
+# ---------------------------------------------------------------------------
+# ThreadMessage — kept for API compatibility with vision / browser tools
+# ---------------------------------------------------------------------------
 
 
 @dataclass
 class ThreadMessage:
-    """
-    Represents a message to be added to a thread.
-    """
+    """Represents a message to be added to a thread."""
 
     type: str
     content: Dict[str, Any]
@@ -37,7 +51,6 @@ class ThreadMessage:
     )
 
     def to_dict(self) -> Dict[str, Any]:
-        """Convert the message to a dictionary for API calls"""
         return {
             "type": self.type,
             "content": self.content,
@@ -47,92 +60,77 @@ class ThreadMessage:
         }
 
 
+# ---------------------------------------------------------------------------
+# SandboxToolsBase — local execution replacement
+# ---------------------------------------------------------------------------
+
+
 class SandboxToolsBase(BaseTool):
-    """Base class for all sandbox tools that provides project-based sandbox access."""
+    """
+    Base class for sandbox tools.
+
+    In the LM Studio / local execution path this class manages a
+    `LocalSandbox` instance instead of a remote Daytona sandbox.
+    All Daytona SDK calls have been removed; the public API surface
+    (``_ensure_sandbox``, ``sandbox``, ``sandbox_id``, ``clean_path``)
+    is preserved so subclasses compile without modification.
+    """
 
     # Class variable to track if sandbox URLs have been printed
     _urls_printed: ClassVar[bool] = False
 
-    # Required fields
     project_id: Optional[str] = None
-    # thread_manager: Optional[ThreadManager] = None
-
-    # Private fields (not part of the model schema)
-    _sandbox: Optional[Sandbox] = None
+    _sandbox: Optional[LocalSandbox] = None
     _sandbox_id: Optional[str] = None
     _sandbox_pass: Optional[str] = None
     workspace_path: str = Field(default="/workspace", exclude=True)
-    _sessions: dict[str, str] = {}
+    _sessions: dict = {}
 
     class Config:
-        arbitrary_types_allowed = True  # Allow non-pydantic types like ThreadManager
+        arbitrary_types_allowed = True
         underscore_attrs_are_private = True
 
-    async def _ensure_sandbox(self) -> Sandbox:
-        """Ensure we have a valid sandbox instance, retrieving it from the project if needed."""
+    async def _ensure_sandbox(self) -> LocalSandbox:
+        """Ensure we have a valid local sandbox instance."""
         if self._sandbox is None:
-            # Get or start the sandbox
             try:
-                self._sandbox = create_sandbox(password=config.daytona.VNC_password)
-                # Log URLs if not already printed
+                self._sandbox = create_sandbox(password="local")
                 if not SandboxToolsBase._urls_printed:
-                    vnc_link = self._sandbox.get_preview_link(6080)
-                    website_link = self._sandbox.get_preview_link(8080)
-
-                    vnc_url = (
-                        vnc_link.url if hasattr(vnc_link, "url") else str(vnc_link)
+                    logger.info(
+                        "[LocalSandbox] Running in local mode — "
+                        "no VNC/website preview URLs available."
                     )
-                    website_url = (
-                        website_link.url
-                        if hasattr(website_link, "url")
-                        else str(website_link)
-                    )
-
-                    print("\033[95m***")
-                    print(f"VNC URL: {vnc_url}")
-                    print(f"Website URL: {website_url}")
-                    print("***\033[0m")
                     SandboxToolsBase._urls_printed = True
-            except Exception as e:
-                logger.error(f"Error retrieving or starting sandbox: {str(e)}")
-                raise e
+            except Exception as exc:
+                logger.error(f"[LocalSandbox] Error creating sandbox: {exc}")
+                raise
         else:
-            if (
-                self._sandbox.state == SandboxState.ARCHIVED
-                or self._sandbox.state == SandboxState.STOPPED
-            ):
-                logger.info(f"Sandbox is in {self._sandbox.state} state. Starting...")
-                try:
-                    daytona.start(self._sandbox)
-                    # Wait a moment for the sandbox to initialize
-                    # sleep(5)
-                    # Refresh sandbox state after starting
-
-                    # Start supervisord in a session when restarting
-                    start_supervisord_session(self._sandbox)
-                except Exception as e:
-                    logger.error(f"Error starting sandbox: {e}")
-                    raise e
+            # Local sandbox is always running; nothing to restart
+            if self._sandbox.state in (SandboxState.ARCHIVED, SandboxState.STOPPED):
+                logger.info("[LocalSandbox] Sandbox marked stopped — resetting state")
+                self._sandbox.state = SandboxState.RUNNING
         return self._sandbox
 
     @property
-    def sandbox(self) -> Sandbox:
+    def sandbox(self) -> LocalSandbox:
         """Get the sandbox instance, ensuring it exists."""
         if self._sandbox is None:
-            raise RuntimeError("Sandbox not initialized. Call _ensure_sandbox() first.")
+            raise RuntimeError(
+                "Sandbox not initialized. Call _ensure_sandbox() first."
+            )
         return self._sandbox
 
     @property
     def sandbox_id(self) -> str:
-        """Get the sandbox ID, ensuring it exists."""
-        if self._sandbox_id is None:
+        """Get the sandbox ID."""
+        if self._sandbox is None:
             raise RuntimeError(
                 "Sandbox ID not initialized. Call _ensure_sandbox() first."
             )
-        return self._sandbox_id
+        return self._sandbox.id
 
     def clean_path(self, path: str) -> str:
         """Clean and normalize a path to be relative to /workspace."""
-        cleaned_path = clean_path(path, self.workspace_path)
-        logger.debug(f"Cleaned path: {path} -> {cleaned_path}")
-        return cleaned_path
+        cleaned = clean_path(path, self.workspace_path)
+        logger.debug(f"[LocalSandbox] clean_path: {path} -> {cleaned}")
+        return cleaned

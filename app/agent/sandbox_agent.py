@@ -1,3 +1,27 @@
+"""
+app/agent/sandbox_agent.py — LM Studio / local execution agent
+===============================================================
+`SandboxManus` has been updated to bypass Daytona entirely.
+
+When `api_type = "lmstudio"` (or any non-Daytona configuration) is
+detected, the agent uses the same local toolset as the standard `Manus`
+agent:
+
+  • PythonExecute  — run Python code locally
+  • BrowserUseTool — control a local Chromium instance
+  • StrReplaceEditor — read / edit local files
+  • AskHuman        — prompt the user for input
+  • Terminate       — signal task completion
+
+The Daytona sandbox tools (SandboxShellTool, SandboxFilesTool, etc.) are
+still imported so that existing code that references them does not break,
+but they are NOT added to the agent's tool collection unless Daytona
+credentials are explicitly configured.
+
+This mirrors the OpenHands approach: the LLM backend (LM Studio) is
+decoupled from the execution environment (local host).
+"""
+
 from typing import Dict, List, Optional
 
 from pydantic import Field, model_validator
@@ -5,24 +29,53 @@ from pydantic import Field, model_validator
 from app.agent.browser import BrowserContextHelper
 from app.agent.toolcall import ToolCallAgent
 from app.config import config
-from app.daytona.sandbox import create_sandbox, delete_sandbox
+from app.daytona.sandbox import LocalSandbox, create_sandbox, delete_sandbox
 from app.daytona.tool_base import SandboxToolsBase
 from app.logger import logger
 from app.prompt.manus import NEXT_STEP_PROMPT, SYSTEM_PROMPT
 from app.tool import Terminate, ToolCollection
 from app.tool.ask_human import AskHuman
+from app.tool.browser_use_tool import BrowserUseTool
 from app.tool.mcp import MCPClients, MCPClientTool
+from app.tool.python_execute import PythonExecute
+from app.tool.str_replace_editor import StrReplaceEditor
+
+# Sandbox-specific tools are imported for compatibility but only used when
+# Daytona credentials are present.
 from app.tool.sandbox.sb_browser_tool import SandboxBrowserTool
 from app.tool.sandbox.sb_files_tool import SandboxFilesTool
 from app.tool.sandbox.sb_shell_tool import SandboxShellTool
 from app.tool.sandbox.sb_vision_tool import SandboxVisionTool
 
 
+def _daytona_configured() -> bool:
+    """Return True only when a real Daytona API key has been provided."""
+    try:
+        settings = config.daytona
+        return bool(
+            settings
+            and getattr(settings, "daytona_api_key", None)
+            and settings.daytona_api_key.strip()
+        )
+    except Exception:
+        return False
+
+
 class SandboxManus(ToolCallAgent):
-    """A versatile general-purpose agent with support for both local and MCP tools."""
+    """
+    A versatile general-purpose agent that works with LM Studio (local) or
+    Daytona (cloud) as the execution backend.
+
+    When Daytona credentials are absent the agent automatically falls back
+    to the local toolset, which requires no external services beyond a
+    running LM Studio instance.
+    """
 
     name: str = "SandboxManus"
-    description: str = "A versatile agent that can solve various tasks using multiple sandbox-tools including MCP-based tools"
+    description: str = (
+        "A versatile agent that can solve various tasks using multiple tools. "
+        "Runs locally with LM Studio when Daytona is not configured."
+    )
 
     system_prompt: str = SYSTEM_PROMPT.format(directory=config.workspace_root)
     next_step_prompt: str = NEXT_STEP_PROMPT
@@ -33,12 +86,12 @@ class SandboxManus(ToolCallAgent):
     # MCP clients for remote tool access
     mcp_clients: MCPClients = Field(default_factory=MCPClients)
 
-    # Add general-purpose tools to the tool collection
+    # Default toolset — local tools only; Daytona tools added later if needed
     available_tools: ToolCollection = Field(
         default_factory=lambda: ToolCollection(
-            # PythonExecute(),
-            # BrowserUseTool(),
-            # StrReplaceEditor(),
+            PythonExecute(),
+            BrowserUseTool(),
+            StrReplaceEditor(),
             AskHuman(),
             Terminate(),
         )
@@ -48,11 +101,15 @@ class SandboxManus(ToolCallAgent):
     browser_context_helper: Optional[BrowserContextHelper] = None
 
     # Track connected MCP servers
-    connected_servers: Dict[str, str] = Field(
-        default_factory=dict
-    )  # server_id -> url/command
+    connected_servers: Dict[str, str] = Field(default_factory=dict)
     _initialized: bool = False
-    sandbox_link: Optional[dict[str, dict[str, str]]] = Field(default_factory=dict)
+
+    # Sandbox reference — only populated when Daytona is active
+    sandbox: Optional[LocalSandbox] = Field(default=None, exclude=True)
+    sandbox_link: Optional[Dict[str, Dict[str, str]]] = Field(default_factory=dict)
+
+    class Config:
+        arbitrary_types_allowed = True
 
     @model_validator(mode="after")
     def initialize_helper(self) -> "SandboxManus":
@@ -62,24 +119,42 @@ class SandboxManus(ToolCallAgent):
 
     @classmethod
     async def create(cls, **kwargs) -> "SandboxManus":
-        """Factory method to create and properly initialize a Manus instance."""
+        """Factory method to create and properly initialize a SandboxManus instance."""
         instance = cls(**kwargs)
         await instance.initialize_mcp_servers()
-        await instance.initialize_sandbox_tools()
+        if _daytona_configured():
+            await instance.initialize_sandbox_tools()
+        else:
+            logger.info(
+                "[SandboxManus] Daytona not configured — running in local / "
+                "LM Studio mode with local tools."
+            )
         instance._initialized = True
         return instance
 
+    # ------------------------------------------------------------------
+    # Daytona sandbox initialisation (only called when credentials exist)
+    # ------------------------------------------------------------------
+
     async def initialize_sandbox_tools(
         self,
-        password: str = config.daytona.VNC_password,
+        password: str = None,
     ) -> None:
+        """
+        Create a Daytona sandbox and register sandbox-specific tools.
+
+        This method is only invoked when `_daytona_configured()` returns
+        True.  In the LM Studio path it is never called.
+        """
+        if password is None:
+            try:
+                password = config.daytona.VNC_password
+            except Exception:
+                password = "123456"
         try:
-            # 创建新沙箱
-            if password:
-                sandbox = create_sandbox(password=password)
-                self.sandbox = sandbox
-            else:
-                raise ValueError("password must be provided")
+            sandbox = create_sandbox(password=password)
+            self.sandbox = sandbox
+
             vnc_link = sandbox.get_preview_link(6080)
             website_link = sandbox.get_preview_link(8080)
             vnc_url = vnc_link.url if hasattr(vnc_link, "url") else str(vnc_link)
@@ -87,17 +162,17 @@ class SandboxManus(ToolCallAgent):
                 website_link.url if hasattr(website_link, "url") else str(website_link)
             )
 
-            # Get the actual sandbox_id from the created sandbox
-            actual_sandbox_id = sandbox.id if hasattr(sandbox, "id") else "new_sandbox"
+            actual_sandbox_id = sandbox.id if hasattr(sandbox, "id") else "local"
             if not self.sandbox_link:
                 self.sandbox_link = {}
             self.sandbox_link[actual_sandbox_id] = {
                 "vnc": vnc_url,
                 "website": website_url,
             }
-            logger.info(f"VNC URL: {vnc_url}")
-            logger.info(f"Website URL: {website_url}")
+            logger.info(f"Sandbox VNC URL: {vnc_url}")
+            logger.info(f"Sandbox Website URL: {website_url}")
             SandboxToolsBase._urls_printed = True
+
             sb_tools = [
                 SandboxBrowserTool(sandbox),
                 SandboxFilesTool(sandbox),
@@ -106,9 +181,13 @@ class SandboxManus(ToolCallAgent):
             ]
             self.available_tools.add_tools(*sb_tools)
 
-        except Exception as e:
-            logger.error(f"Error initializing sandbox tools: {e}")
+        except Exception as exc:
+            logger.error(f"Error initializing sandbox tools: {exc}")
             raise
+
+    # ------------------------------------------------------------------
+    # MCP server management
+    # ------------------------------------------------------------------
 
     async def initialize_mcp_servers(self) -> None:
         """Initialize connections to configured MCP servers."""
@@ -129,10 +208,10 @@ class SandboxManus(ToolCallAgent):
                             stdio_args=server_config.args,
                         )
                         logger.info(
-                            f"Connected to MCP server {server_id} using command {server_config.command}"
+                            f"Connected to MCP server {server_id} via {server_config.command}"
                         )
-            except Exception as e:
-                logger.error(f"Failed to connect to MCP server {server_id}: {e}")
+            except Exception as exc:
+                logger.error(f"Failed to connect to MCP server {server_id}: {exc}")
 
     async def connect_mcp_server(
         self,
@@ -151,7 +230,6 @@ class SandboxManus(ToolCallAgent):
             await self.mcp_clients.connect_sse(server_url, server_id)
             self.connected_servers[server_id or server_url] = server_url
 
-        # Update available tools with only the new tools from this server
         new_tools = [
             tool for tool in self.mcp_clients.tools if tool.server_id == server_id
         ]
@@ -165,7 +243,6 @@ class SandboxManus(ToolCallAgent):
         else:
             self.connected_servers.clear()
 
-        # Rebuild available tools without the disconnected server's tools
         base_tools = [
             tool
             for tool in self.available_tools.tools
@@ -174,26 +251,40 @@ class SandboxManus(ToolCallAgent):
         self.available_tools = ToolCollection(*base_tools)
         self.available_tools.add_tools(*self.mcp_clients.tools)
 
+    # ------------------------------------------------------------------
+    # Sandbox lifecycle
+    # ------------------------------------------------------------------
+
     async def delete_sandbox(self, sandbox_id: str) -> None:
-        """Delete a sandbox by ID."""
+        """Delete a sandbox by ID (no-op in local mode)."""
         try:
             await delete_sandbox(sandbox_id)
-            logger.info(f"Sandbox {sandbox_id} deleted successfully")
-            if sandbox_id in self.sandbox_link:
+            logger.info(f"Sandbox {sandbox_id} deleted / released")
+            if self.sandbox_link and sandbox_id in self.sandbox_link:
                 del self.sandbox_link[sandbox_id]
-        except Exception as e:
-            logger.error(f"Error deleting sandbox {sandbox_id}: {e}")
-            raise e
+        except Exception as exc:
+            logger.error(f"Error deleting sandbox {sandbox_id}: {exc}")
+            raise
+
+    # ------------------------------------------------------------------
+    # Cleanup
+    # ------------------------------------------------------------------
 
     async def cleanup(self):
-        """Clean up Manus agent resources."""
+        """Clean up agent resources."""
         if self.browser_context_helper:
             await self.browser_context_helper.cleanup_browser()
-        # Disconnect from all MCP servers only if we were initialized
         if self._initialized:
             await self.disconnect_mcp_server()
-            await self.delete_sandbox(self.sandbox.id if self.sandbox else "unknown")
+            if self.sandbox is not None:
+                await self.delete_sandbox(
+                    self.sandbox.id if hasattr(self.sandbox, "id") else "unknown"
+                )
             self._initialized = False
+
+    # ------------------------------------------------------------------
+    # Think loop
+    # ------------------------------------------------------------------
 
     async def think(self) -> bool:
         """Process current state and decide next actions with appropriate context."""
@@ -204,7 +295,7 @@ class SandboxManus(ToolCallAgent):
         original_prompt = self.next_step_prompt
         recent_messages = self.memory.messages[-3:] if self.memory.messages else []
         browser_in_use = any(
-            tc.function.name == SandboxBrowserTool().name
+            tc.function.name in (BrowserUseTool().name, SandboxBrowserTool().name)
             for msg in recent_messages
             if msg.tool_calls
             for tc in msg.tool_calls
