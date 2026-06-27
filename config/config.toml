@@ -1,0 +1,57 @@
+# ============================================================
+# OpenManus — LM Studio Configuration (no Daytona required)
+# ============================================================
+# LM Studio exposes an OpenAI-compatible REST API.
+# When running inside Docker, use host.docker.internal to reach
+# the LM Studio server on the host machine.
+#
+# Usage:
+#   cp config/config.example-lmstudio.toml config/config.toml
+#   python main.py
+
+# --------------- Primary LLM --------------------------------
+[llm]
+api_type    = "lmstudio"
+model       = "qwen/qwen3-coder-next"
+base_url    = "http://host.docker.internal:1234/v1"
+api_key     = "lm-studio"               # Arbitrary non-empty string (not validated by LM Studio)
+max_tokens  = 8192
+temperature = 0.0
+
+# --------------- Vision / Multimodal LLM (optional) ---------
+# Uncomment and adjust if you load a vision-capable model in LM Studio.
+# [llm.vision]
+# api_type    = "lmstudio"
+# model       = "qwen/qwen3-coder-next"
+# base_url    = "http://host.docker.internal:1234/v1"
+# api_key     = "lm-studio"
+# max_tokens  = 8192
+# temperature = 0.0
+
+# --------------- Browser (optional) -------------------------
+# [browser]
+# headless         = false
+# disable_security = true
+
+# --------------- Search (optional) --------------------------
+# [search]
+# engine          = "DuckDuckGo"
+# fallback_engines = ["Bing", "Google"]
+
+# --------------- Local sandbox (optional) -------------------
+# [sandbox]
+# use_sandbox    = false
+# image          = "python:3.12-slim"
+# work_dir       = "/workspace"
+# memory_limit   = "512m"
+# cpu_limit      = 1.0
+# timeout        = 300
+# network_enabled = false
+
+# --------------- MCP (optional) -----------------------------
+[mcp]
+server_reference = "app.mcp.server"
+
+# --------------- Run-flow (optional) ------------------------
+[runflow]
+use_data_analysis_agent = false
