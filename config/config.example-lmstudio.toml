@@ -12,7 +12,7 @@
 # --------------- Primary LLM --------------------------------
 [llm]
 api_type    = "lmstudio"
-model       = "qwen/qwen3-coder-next"
+model       = "openai/qwen/qwen3-coder-next"
 base_url    = "http://host.docker.internal:1234/v1"
 api_key     = "lm-studio"               # Arbitrary non-empty string (not validated by LM Studio)
 max_tokens  = 8192
