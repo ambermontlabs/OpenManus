@@ -1,8 +1,13 @@
 # Global LLM configuration
+# 
+# To use environment variables for API keys, set ANTHROPIC_API_KEY or OPENAI_API_KEY
+# For Anthropic models (Claude), set: export ANTHROPIC_API_KEY=sk-...
+# For OpenAI-compatible APIs, set: export OPENAI_API_KEY=sk-...
+#
 [llm]
 model = "claude-3-7-sonnet-20250219"       # The LLM model to use
 base_url = "https://api.anthropic.com/v1/" # API endpoint URL
-api_key = "YOUR_API_KEY"                   # Your API key
+api_key = "YOUR_API_KEY"                   # Your API key (or set ANTHROPIC_API_KEY env var)
 max_tokens = 8192                          # Maximum number of tokens in the response
 temperature = 0.0                          # Controls randomness
 

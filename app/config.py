@@ -1,15 +1,51 @@
 import json
+import os
 import threading
 import tomllib
 from pathlib import Path
 from typing import Dict, List, Optional
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, model_validator
+
+from app.logger import logger
 
 
 def get_project_root() -> Path:
     """Get the project root directory"""
     return Path(__file__).resolve().parent.parent
+
+
+def _get_api_key_from_env(llm_config: dict, is_vision: bool = False) -> Optional[str]:
+    """
+    Try to get API key from environment variables.
+    
+    Priority:
+    1. ANTHROPIC_API_KEY (for Anthropic models)
+    2. OPENAI_API_KEY (for OpenAI-compatible APIs)
+    
+    Returns None if no env var is set.
+    """
+    # Check for Anthropic API key first
+    if llm_config.get("api_type", "").lower() in ["anthropic", ""]:
+        # Try to detect if using Anthropic based on URL
+        base_url = llm_config.get("base_url", "")
+        if "anthropic.com" in base_url.lower() or not base_url:
+            env_key = os.getenv("ANTHROPIC_API_KEY")
+            if env_key and env_key.strip() and env_key != "YOUR_API_KEY":
+                logger.info(
+                    f"Using Anthropic API key from environment variable"
+                )
+                return env_key
+    
+    # Check for OpenAI API key
+    openai_key = os.getenv("OPENAI_API_KEY")
+    if openai_key and openai_key.strip() and openai_key != "YOUR_API_KEY":
+        logger.info(
+            f"Using OpenAI API key from environment variable"
+        )
+        return openai_key
+    
+    return None
 
 
 PROJECT_ROOT = get_project_root()
@@ -28,6 +64,23 @@ class LLMSettings(BaseModel):
     temperature: float = Field(1.0, description="Sampling temperature")
     api_type: str = Field(..., description="Azure, Openai, or Ollama")
     api_version: str = Field(..., description="Azure Openai version if AzureOpenai")
+
+    @model_validator(mode="after")
+    def validate_api_key(self) -> "LLMSettings":
+        """Validate API key is not a placeholder."""
+        if self.api_key and self.api_key.strip() in [
+            "YOUR_API_KEY",
+            "your_api_key",
+            "api_key_here",
+            "YOUR_OPENAI_API_KEY",
+            "sk-xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
+        ]:
+            logger.warning(
+                f"API key appears to be a placeholder. "
+                f"Set ANTHROPIC_API_KEY or OPENAI_API_KEY environment variable, "
+                f"or update config/config.toml with your actual API key."
+            )
+        return self
 
 
 class ProxySettings(BaseModel):
@@ -214,8 +267,7 @@ class AppConfig(BaseModel):
         None, description="LM Studio local inference configuration"
     )
 
-    class Config:
-        arbitrary_types_allowed = True
+    model_config = {"arbitrary_types_allowed": True}
 
 
 class Config:
@@ -261,10 +313,16 @@ class Config:
             k: v for k, v in raw_config.get("llm", {}).items() if isinstance(v, dict)
         }
 
+        # Check for API key from environment variables first
+        env_api_key = _get_api_key_from_env(base_llm)
+        
+        # If env var not set, try config file
+        api_key = env_api_key if env_api_key else base_llm.get("api_key")
+        
         default_settings = {
             "model": base_llm.get("model"),
             "base_url": base_llm.get("base_url"),
-            "api_key": base_llm.get("api_key"),
+            "api_key": api_key,
             "max_tokens": base_llm.get("max_tokens", 4096),
             "max_input_tokens": base_llm.get("max_input_tokens"),
             "temperature": base_llm.get("temperature", 1.0),
