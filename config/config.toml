@@ -2,50 +2,48 @@
 # OpenManus — LM Studio Configuration (no Daytona required)
 # ============================================================
 # LM Studio exposes an OpenAI-compatible REST API.
-# When running inside Docker, use host.docker.internal to reach
-# the LM Studio server on the host machine.
+# This config uses qwen/qwen3-coder-next model running on port 3000.
 #
 # Usage:
 #   cp config/config.example-lmstudio.toml config/config.toml
 #   python main.py
 
 # --------------- Primary LLM --------------------------------
-[llm]
-api_type    = "lmstudio"
-model       = "qwen/qwen3-coder-next"
-base_url    = "http://host.docker.internal:1234/v1"
-api_key     = "lm-studio"               # Arbitrary non-empty string (not validated by LM Studio)
-max_tokens  = 8192
-temperature = 0.0
+[llm] #OLLAMA:
+api_type = "ollama"
+model = "openai/qwen/qwen3-coder-next"                             # The LLM model to use
+base_url = "http://host.docker.internal:3000/v1"                  # API endpoint URL
+api_key = "ollama"                                                  # Your API key (not validated by Ollama)
+max_tokens = 4096                                                   # Maximum number of tokens in the response
+temperature = 0.0                                                   # Controls randomness
 
-# --------------- Vision / Multimodal LLM (optional) ---------
-# Uncomment and adjust if you load a vision-capable model in LM Studio.
-# [llm.vision]
-# api_type    = "lmstudio"
-# model       = "qwen/qwen3-coder-next"
-# base_url    = "http://host.docker.internal:1234/v1"
-# api_key     = "lm-studio"
-# max_tokens  = 8192
-# temperature = 0.0
+# --------------- Vision / Multimodal LLM --------------------
+[llm.vision] #OLLAMA VISION:
+api_type = "ollama"
+model = "openai/qwen/qwen3-coder-next"                             # The vision model to use
+base_url = "http://host.docker.internal:3000/v1"                  # API endpoint URL for vision model
+api_key = "ollama"                                                  # Your API key (not validated by Ollama)
+max_tokens = 4096                                                   # Maximum number of tokens in the response
+temperature = 0.0                                                  # Controls randomness for vision model
 
 # --------------- Browser (optional) -------------------------
 # [browser]
-# headless         = false
+# headless = false
 # disable_security = true
 
 # --------------- Search (optional) --------------------------
 # [search]
-# engine          = "DuckDuckGo"
+# engine = "DuckDuckGo"
 # fallback_engines = ["Bing", "Google"]
 
 # --------------- Local sandbox (optional) -------------------
 # [sandbox]
-# use_sandbox    = false
-# image          = "python:3.12-slim"
-# work_dir       = "/workspace"
-# memory_limit   = "512m"
-# cpu_limit      = 1.0
-# timeout        = 300
+# use_sandbox = false
+# image = "python:3.12-slim"
+# work_dir = "/workspace"
+# memory_limit = "512m"
+# cpu_limit = 1.0
+# timeout = 300
 # network_enabled = false
 
 # --------------- MCP (optional) -----------------------------
