@@ -1,0 +1,55 @@
+# ============================================================
+# OpenManus — Ollama Configuration (no Daytona required)
+# ============================================================
+# Ollama exposes an OpenAI-compatible REST API.
+# This config uses Llama 3.2 for text and vision tasks locally.
+#
+# Usage:
+#   cp config/config.example-ollama.toml config/config.toml
+#   python main.py
+
+# --------------- Primary LLM --------------------------------
+[llm] #OLLAMA:
+api_type = "ollama"
+model = "llama3.2"                                                  # The LLM model to use
+base_url = "http://localhost:11434/v1"                             # API endpoint URL
+api_key = "ollama"                                                  # Your API key (not validated by Ollama)
+max_tokens = 4096                                                   # Maximum number of tokens in the response
+temperature = 0.0                                                   # Controls randomness
+
+# --------------- Vision / Multimodal LLM --------------------
+[llm.vision] #OLLAMA VISION:
+api_type = "ollama"
+model = "llama3.2-vision"                                          # The vision model to use
+base_url = "http://localhost:11434/v1"                             # API endpoint URL for vision model
+api_key = "ollama"                                                  # Your API key (not validated by Ollama)
+max_tokens = 4096                                                   # Maximum number of tokens in the response
+temperature = 0.0                                                  # Controls randomness for vision model
+
+# --------------- Browser (optional) -------------------------
+# [browser]
+# headless = false
+# disable_security = true
+
+# --------------- Search (optional) --------------------------
+# [search]
+# engine = "DuckDuckGo"
+# fallback_engines = ["Bing", "Google"]
+
+# --------------- Local sandbox (optional) -------------------
+# [sandbox]
+# use_sandbox = false
+# image = "python:3.12-slim"
+# work_dir = "/workspace"
+# memory_limit = "512m"
+# cpu_limit = 1.0
+# timeout = 300
+# network_enabled = false
+
+# --------------- MCP (optional) -----------------------------
+[mcp]
+server_reference = "app.mcp.server"
+
+# --------------- Run-flow (optional) ------------------------
+[runflow]
+use_data_analysis_agent = false
