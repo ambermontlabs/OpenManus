@@ -6,7 +6,12 @@ You're seeing errors like:
 Error code: 401 - {'error': {'code': 'authentication_error', 'message': 'Invalid Anthropic API Key'
 ```
 
-But this is misleading! The real issue is that **Ollama is not installed or not running**.
+Or:
+```
+Error code: 404 - {'error': {'message': "model 'llama3.2' not found"
+```
+
+But this is misleading! The real issue is that **Ollama is not installed, running, or doesn't have the required model**.
 
 ## Solution
 
@@ -36,6 +41,17 @@ Once Ollama is installed, pull the model:
 ollama pull llama3.2
 ```
 
+**If you see "model not found" error:**
+```bash
+# Check available models
+ollama list
+
+# Try llama3 instead of llama3.2
+ollama pull llama3
+
+# Update config to use llama3 instead of llama3.2 in config/config.toml
+```
+
 ### Step 3: Verify Ollama is Running
 
 ```bash
@@ -48,11 +64,11 @@ Expected response:
 ```
 (This is normal - it means Ollama is running but no model was specified)
 
-### Step 4: Run OpenManus
+### Step 4: Pull the Vision Model (Optional)
 
+If you want vision capabilities:
 ```bash
-cd /workspace/project/OpenManus
-python main.py
+ollama pull llama3.2-vision
 ```
 
 ## What Was Happening
@@ -61,14 +77,14 @@ The config file (`config/config.toml`) was correctly set to use Ollama:
 ```toml
 [llm]
 api_type = 'ollama'
-base_url = "http://localhost:11434/v1"
 model = "llama3.2"
+base_url = "http://localhost:11434/v1"
 ```
 
 But the Ollama **server** wasn't installed or running, so:
 1. The app couldn't connect to `localhost:11434`
 2. The OpenAI SDK tried to authenticate anyway
-3. It gave a confusing "Anthropic API Key" error
+3. It gave a confusing "Anthropic API Key" error (Old) or "model not found" error (Current)
 
 ## Alternative: Use Cloud LLMs
 
@@ -104,6 +120,9 @@ ps aux | grep ollama
 
 # Or check the port
 lsof -i :11434
+
+# Check models
+ollama list
 
 # Check logs (Docker)
 docker logs ollama
