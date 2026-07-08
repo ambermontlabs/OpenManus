@@ -34,6 +34,9 @@ setup(
         "structlog>=24.1.0,<25.0.0",
         "boto3~=1.37.18",
         "pydantic_core>=2.46.0,<3.0",
+        # Updated requests and urllib3 for compatibility
+        "requests>=2.32.4,<3.0",
+        "urllib3>=2.0.0,<3.0.0",
         "colorama~=0.4.6",
         "playwright>=1.52.0,<1.53.0",
         "docker~=7.1.0",
@@ -45,7 +48,11 @@ setup(
         "mcp~=1.5.0",
         "httpx>=0.27.0",
         "tomli>=2.0.0",
-        "requests~=2.32.3",
+        # Updated requests and urllib3 for compatibility
+        "requests>=2.32.4,<3.0",
+        "urllib3>=2.0.0,<3.0.0",
+        "charset_normalizer>=3.3.0,<4.0.0",
+        "chardet>=5.0.0,<6.0.0",
         "beautifulsoup4~=4.13.3",
         "crawl4ai>=0.9.0",
         "huggingface-hub~=0.29.2",
