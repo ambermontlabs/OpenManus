@@ -124,11 +124,23 @@ One line for run OpenManus:
 python main.py
 ```
 
+Or if you want to suppress dependency warnings, use the run script:
+
+```bash
+python run_openmanus.py
+```
+
 Then input your idea via terminal!
 
 For MCP tool version, you can run:
 ```bash
 python run_mcp.py
+```
+
+Or with warnings suppressed:
+
+```bash
+python run_openmanus.py --prompt "your prompt here"
 ```
 
 For unstable multi-agent version, you also can run:
