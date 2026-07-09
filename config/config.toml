@@ -1,7 +1,7 @@
 # Global LLM configuration
 [llm] #OLLAMA:
 api_type = 'ollama'
-model = "llama3.2:latest"                                          # The LLM model to use (include tag for best compatibility)
+model = "llama3.2"                                          # The LLM model to use (include tag for best compatibility)
 base_url = "http://localhost:11434/v1"                             # API endpoint URL
 api_key = "ollama"                                                 # Your API key
 max_tokens = 4096                                                  # Maximum number of tokens in the response
